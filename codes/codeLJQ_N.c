@@ -30,8 +30,7 @@
 #define Nx 1999
 #define Nz 1999
 
-#define lambdaB 2.0
-#define Vq 0.1
+
 
 #define Lx (dx*(Nx-1))
 #define Lz (dz*(Nz-1))
@@ -51,6 +50,8 @@ invariant along x and y (rho(z))
 full grand-canonical minimization
 */
 
+double lambdaB;
+double Vq;
 
 const double alpha=0.01;
 const double rmin=pow(2.,1./6);
@@ -92,7 +93,7 @@ fftw_complex  UfilterFFT[Nx*K];
 double dist(int,int,int,int);
 
 void getn(), getc1_fmt(),getc1_LJ(),filterc1(), getVext(), rhoinit(), iterate();
-void getomega3(),getomega2(),getomega1(),getomega0(),getomega1v(),getomega2v(),rhocpy(),filterrho(),write_rho(double,int),conv_FFT2D_2(double*,fftw_complex *,double*),getc1_LJ2(),getc1_LJ2_i(int,int,double),getUFilterFFT();
+void getomega3(),getomega2(),getomega1(),getomega0(),getomega1v(),getomega2v(),rhocpy(),filterrho(),write_rho(double,int),conv_FFT2D_2(double*,fftw_complex *,double*),getc1_LJ2(),getc1_LJ2_i(int,int,double),getUFilterFFT(),read_params();
 
 double aux_J5(double, double);
 double aux_J11(double, double);
@@ -390,7 +391,20 @@ void getn()
 	
 }
 
-
+void read_params()
+{
+	FILE *fp=fopen("params.txt", "r");
+	char line[256];
+	while (fgets(line, sizeof(line), fp)) 
+	{
+    if (sscanf(line, "lambdaB=%lf", &lambdaB) == 1) continue;
+    if (sscanf(line, "Vq=%lf", &Vq) == 1) continue;
+    if (sscanf(line, "ew=%lf", &ew) == 1) continue;
+  }
+	
+  printf("\n------------\nparams:\nlambdaB:%f\nVq:%f\new:%f\n------------\n",lambdaB,Vq,ew); 
+  fclose(fp);
+}
 
 void conv_FFT2D(double *f, double *g, double *h2)
 {
@@ -776,7 +790,7 @@ void write_rho(double elapsed,int count_iter)
 int main(int argc,char *argv[])
 {
 	
-	ew=atof(argv[1]);
+	read_params();
 	
 	clock_t start = clock();clock_t end;
 	double elapsed;
