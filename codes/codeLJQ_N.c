@@ -18,19 +18,9 @@
 #define dx 0.025
 //#define mu .6045291013//-3.8214630890212753
 
-#define rhob_solvent_l 0.6039361095188667
-#define rhob_solvent_g 0.026202777905486873
-
-#define rhob_solute_l 0.019845282259923474
-#define rhob_solute_g 6.316260027217214e-05
-
-
 #define rc 2.5
-
 #define Nx 1999
 #define Nz 1999
-
-
 
 #define Lx (dx*(Nx-1))
 #define Lz (dz*(Nz-1))
@@ -56,11 +46,20 @@ double Vq;
 const double alpha=0.01;
 const double rmin=pow(2.,1./6);
 //const double rc=2.5;
-const double eps=1.0;//0.9793868;
-const double eps_i=1.403153153172973;
+double eps=0.0;//0.9793868;
+double eps_i=0.0;
+
+double rhob_solvent_l=0.0;//0.6039361095188667
+double rhob_solvent_g=0.0;//0.026202777905486873
+
+double rhob_solute_l=0.0;//0.019845282259923474
+double rhob_solute_g=0.0;//6.316260027217214e-05
+
 
 double mu_solvent=0.0;
 double mu_solute=0.0;
+
+int Nbatch=0;
 
 double ew;
 double Nrho[3];
@@ -93,7 +92,7 @@ fftw_complex  UfilterFFT[Nx*K];
 double dist(int,int,int,int);
 
 void getn(), getc1_fmt(),getc1_LJ(),filterc1(), getVext(), rhoinit(), iterate();
-void getomega3(),getomega2(),getomega1(),getomega0(),getomega1v(),getomega2v(),rhocpy(),filterrho(),write_rho(double,int),conv_FFT2D_2(double*,fftw_complex *,double*),getc1_LJ2(),getc1_LJ2_i(int,int,double),getUFilterFFT(),read_params();
+void getomega3(),getomega2(),getomega1(),getomega0(),getomega1v(),getomega2v(),rhocpy(),filterrho(),write_rho(double,int),conv_FFT2D_2(double*,fftw_complex *,double*),getc1_LJ2(),getc1_LJ2_i(int,int,double),getUFilterFFT(),read_params(),initialize_dataframes(int,double*),initialize_all_dataframes();
 
 double aux_J5(double, double);
 double aux_J11(double, double);
@@ -317,7 +316,7 @@ void get_mu()
 	
 	mu_solute=log(rhob_solute_l) + (14.*eta-13.*eta*eta+5.*eta*eta*eta)/(2.*(1.-eta)*(1.-eta)*(1.-eta)) - log(1.-eta) - (1.171861897)*
 	(4.*PI*rhob_solvent_l)*eps_i;
-	printf("%f\n%f\n",mu_solvent,mu_solute);
+	printf("mu_solvent:%f\nmu_solute:%f\n",mu_solvent,mu_solute);
 }
 
 void rhoinit()
@@ -400,9 +399,16 @@ void read_params()
     if (sscanf(line, "lambdaB=%lf", &lambdaB) == 1) continue;
     if (sscanf(line, "Vq=%lf", &Vq) == 1) continue;
     if (sscanf(line, "ew=%lf", &ew) == 1) continue;
+    if (sscanf(line, "eps=%lf", &eps) == 1) continue;
+    if (sscanf(line, "eps_i=%lf", &eps_i) == 1) continue;
+    if (sscanf(line, "rhob_solvent_l=%lf", &rhob_solvent_l) == 1) continue;
+    if (sscanf(line, "rhob_solvent_g=%lf", &rhob_solvent_g) == 1) continue;
+    if (sscanf(line, "rhob_solute_l=%lf", &rhob_solute_l) == 1) continue;
+    if (sscanf(line, "rhob_solute_g=%lf", &rhob_solute_g) == 1) continue; 
+    if (sscanf(line, "Nbatch=%d", &Nbatch) == 1) continue;
   }
 	
-  printf("\n------------\nparams:\nlambdaB:%f\nVq:%f\new:%f\n------------\n",lambdaB,Vq,ew); 
+  printf("\n----------------\nparams:\nNbatch:%d\nlambdaB:%f\nVq:%f\new:%f\neps:%f\neps_i:%f\nrhob_solvent_l:%f\nrhob_solvent_g:%f\nrhob_solute_l:%f\nrhob_solute_g:%f\n----------------\n",Nbatch,lambdaB,Vq,ew,eps,eps_i,rhob_solvent_l,rhob_solvent_g,rhob_solute_l,rhob_solute_g); 
   fclose(fp);
 }
 
@@ -775,7 +781,7 @@ void write_rho(double elapsed,int count_iter)
 			fprintf(F,"%d %d %f %f %f %f\n",i,j,rho[0][i*Nz+j],rho[1][i*Nz+j],rho[2][i*Nz+j],psi[j*Nx+i]);
 		fprintf(F,"\n");
 	}
-	fprintf(F,"------------------\ncycles: 20 x %d ;time: %f s\n",count_iter,elapsed);
+	fprintf(F,"------------------\ncycles: %d x %d ;time: %f s\n",Nbatch,count_iter,elapsed);
 	fclose(F);
 	
 	sprintf(fname,"../data/newrho1DNeps%feps_i%few%fdx%frhob_solvent_l%frhob_solute_l%flambdaB%f.dat",eps,eps_i,ew,dx,rhob_solvent_l,rhob_solute_l,lambdaB);
@@ -783,14 +789,60 @@ void write_rho(double elapsed,int count_iter)
 	
 	for(int j=0;j<Nz;j++)
 	fprintf(F,"%f %f %f %f %f %f\n",j*dz,rho[0][(Nx/2)*Nz+j],rho[1][(Nx/2)*Nz+j],rho[2][(Nx/2)*Nz+j],c1[0][(Nx/2)*Nz+j],psi[(j)*Nz+(Nx/2)]);
-	fprintf(F,"------------------\ncycles: 20 x %d ;time: %f s\n",count_iter,elapsed);
+	fprintf(F,"------------------\ncycles: %d x %d ;time: %f s\n",Nbatch,count_iter,elapsed);
 	fclose(F);
+}
+
+void initialize_dataframes(int Narr,double *arr)
+{
+	for(int i=0;i<Narr;i++)
+	arr[i]=0.0;
+}
+
+void initialize_all_dataframes()
+{
+	for(int i=0;i<3;i++)
+	{
+		initialize_dataframes(N,rho[i]);
+		initialize_dataframes(N,rhonew[i]);
+		initialize_dataframes(N,c1[i]);
+	}
+	
+	initialize_dataframes(N,rhocopy);
+	initialize_dataframes(N,Vext);
+	initialize_dataframes(N,Vext_Q);
+	initialize_dataframes(N,phi);
+	initialize_dataframes(N,psi);
+	initialize_dataframes(Nx,psi_bottom);
+	initialize_dataframes(Nx,psi_top);
+	
+	initialize_dataframes(N,n0);
+	initialize_dataframes(N,n1);
+	initialize_dataframes(N,n2);
+	initialize_dataframes(N,n3);
+	initialize_dataframes(N,n1vx);
+	initialize_dataframes(N,n1vz);
+	initialize_dataframes(N,n2vx);
+	initialize_dataframes(N,n2vz);
+	
+	
+	initialize_dataframes(N,dphidn0);
+	initialize_dataframes(N,dphidn1);
+	initialize_dataframes(N,dphidn2);
+	initialize_dataframes(N,dphidn3);
+	initialize_dataframes(N,dphidn1vx);
+	initialize_dataframes(N,dphidn1vz);
+	initialize_dataframes(N,dphidn2vx);
+	initialize_dataframes(N,dphidn2vz);
+	
+	initialize_dataframes(N,c1_temp);
 }
 
 int main(int argc,char *argv[])
 {
 	
 	read_params();
+	initialize_all_dataframes();
 	
 	clock_t start = clock();clock_t end;
 	double elapsed;
@@ -810,7 +862,7 @@ int main(int argc,char *argv[])
 	
 	for(int i=1;i<=INT_MAX;++i)
 	{	
-		for(int j=1;j<=10;j++)
+		for(int j=1;j<=Nbatch;j++)
 			iterate();
 		end = clock();
 		elapsed = (double)(end - start) / CLOCKS_PER_SEC;

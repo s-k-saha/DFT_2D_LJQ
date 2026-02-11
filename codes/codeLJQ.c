@@ -18,17 +18,10 @@
 #define dx 0.025
 //#define mu .6045291013//-3.8214630890212753
 
-#define rhob 0.304665
-#define rhob1 (rhob/2)//
-#define rhob2 (rhob/2)//
-
 #define rc 2.5
 
-#define Nx 999
-#define Nz 999
-
-#define lambdaB 8.0
-#define Vq 0.1
+#define Nx 1999
+#define Nz 1999
 
 #define Lx (dx*(Nx-1))
 #define Lz (dz*(Nz-1))
@@ -42,18 +35,32 @@
 #define N (Nx*Nz) //Nx*Nz
 #define NiR2 (4*NiR*NiR) //4*NiR*NiR
 
+/*
+full system: 0->solvent, 1-> +ion, 2-> -ion
+invariant along x and y (rho(z))
+full grand-canonical minimization
+*/
+int Nbatch;
+double lambdaB;
+double Vq;
+
+double rhob_solvent=0.0;//0.6039361095188667//
+double rhob_solute=0.0;//0.019845282259923474//
 
 
 const double alpha=0.01;
 const double rmin=pow(2.,1./6);
 //const double rc=2.5;
-const double eps=0.0;//0.9793868;
-double ew;
-double Nrho;
+double eps=0.0;//1.0;//0.9793868;
+double eps_i=0.0;//1.403153153172973;
 
-double rho[Nx*Nz],rhonew[Nx*Nz],rhocopy[Nx*Nz],Vext[Nx*Nz],Vext_Q[Nx*Nz];
-double rho1[Nx*Nz];
-double rho2[Nx*Nz];
+double mu_solvent=0.0;
+double mu_solute=0.0;
+
+double ew;
+double Nrho[3];
+
+double rho[3][Nx*Nz],rhonew[3][Nx*Nz],rhocopy[Nx*Nz],Vext[Nx*Nz],Vext_Q[Nx*Nz];
 double phi[Nx*Nz];
 double psi[Nx*Nz];
 double psi_bottom[Nx];
@@ -61,7 +68,7 @@ double psi_top[Nx];
 
 double n0[Nx*Nz],n1[Nx*Nz],n2[Nx*Nz],n3[Nx*Nz],n1vx[Nx*Nz],n1vz[Nx*Nz],n2vx[Nx*Nz],n2vz[Nx*Nz];
 double dphidn0[Nx*Nz],dphidn1[Nx*Nz],dphidn2[Nx*Nz],dphidn3[Nx*Nz],dphidn1vx[Nx*Nz],dphidn1vz[Nx*Nz],dphidn2vx[Nx*Nz],dphidn2vz[Nx*Nz];
-double c1[2][Nx*Nz];
+double c1[3][Nx*Nz];
 double c1_temp[Nx*Nz];
 
 fftw_complex  omega3[Nx*K];
@@ -81,14 +88,14 @@ fftw_complex  UfilterFFT[Nx*K];
 double dist(int,int,int,int);
 
 void getn(), getc1_fmt(),getc1_LJ(),filterc1(), getVext(), rhoinit(), iterate();
-void getomega3(),getomega2(),getomega1(),getomega0(),getomega1v(),getomega2v(),rhocpy(),filterrho(),write_rho(double,int),conv_FFT2D_2(double*,fftw_complex *,double*),getc1_LJ2(),getUFilterFFT();
+void getomega3(),getomega2(),getomega1(),getomega0(),getomega1v(),getomega2v(),rhocpy(),filterrho(),write_rho(double,int),conv_FFT2D_2(double*,fftw_complex *,double*),getc1_LJ2(),getc1_LJ2_i(int,int,double),getUFilterFFT(),read_params(),initialize_dataframes(int,double*),initialize_all_dataframes();
 
 double aux_J5(double, double);
 double aux_J11(double, double);
 double J5(double, double,double);
 double J11(double, double,double);
 double ULJ(double);
-double get_mu(double);
+void get_mu();
 
 int getDx(int),getDz(int);
 void add_c(double*,double*);
@@ -297,19 +304,24 @@ void getomega1v()
 }
 
 
-double get_mu(double rhobi)
+void get_mu()
 {
-	double eta = (4./3*PI*R3)*rhob;
-	return (log(rhobi) + (14.*eta-13.*eta*eta+5.*eta*eta*eta)/(2.*(1.-eta)*(1.-eta)*(1.-eta)) - log(1.-eta));
+	double rhob=rhob_solvent+2.*rhob_solute;
+	double eta = (rhob)*(4./3*PI*R3);
+	mu_solvent=log(rhob_solvent) + (14.*eta-13.*eta*eta+5.*eta*eta*eta)/(2.*(1.-eta)*(1.-eta)*(1.-eta)) - log(1.-eta) - (1.171861897)*(4.*PI*rhob_solvent)*eps - (1.171861897)*(8.*PI*rhob_solute)*eps_i;
+	
+	mu_solute=log(rhob_solute) + (14.*eta-13.*eta*eta+5.*eta*eta*eta)/(2.*(1.-eta)*(1.-eta)*(1.-eta)) - log(1.-eta) - (1.171861897)*
+	(4.*PI*rhob_solvent)*eps_i;
+	printf("mu_solvent:%f\nmu_solute:%f\n",mu_solvent,mu_solute);
 }
 
 void rhoinit()
 {
 	for(int i=0;i<N;i++)
 	{
-		rho1[i]=rhob1*exp(-Vext[i]);
-		rho2[i]=rhob2*exp(-Vext[i]);		
-		rho[i]=rho1[i]+rho2[i];
+		rho[0][i]=rhob_solvent*exp(-Vext[i]);
+		rho[1][i]=rhob_solute*exp(-Vext[i]);
+		rho[2][i]=rhob_solute*exp(-Vext[i]);
 	}
 }
 
@@ -456,41 +468,56 @@ void getc1_fmt()
 			{
 				c1[0][i1*Nz+j1]=0.;
 				c1[1][i1*Nz+j1]=0.;
-				
+				c1[2][i1*Nz+j1]=0.;
 				//c1_temp[i*Nz+j1]=0;
 			}
 	
 	conv_FFT2D_2(dphidn0, omega0, c1_temp);
 	add_c(c1[0],c1_temp);
 	add_c(c1[1],c1_temp);
+	add_c(c1[2],c1_temp);
 	
 	conv_FFT2D_2(dphidn1, omega1, c1_temp);
 	add_c(c1[0],c1_temp);
 	add_c(c1[1],c1_temp);
+	add_c(c1[2],c1_temp);
+	
 	
 	conv_FFT2D_2(dphidn2, omega2, c1_temp);
 	add_c(c1[0],c1_temp);
 	add_c(c1[1],c1_temp);
+	add_c(c1[2],c1_temp);
+	
 	
 	conv_FFT2D_2(dphidn3, omega3, c1_temp);
 	add_c(c1[0],c1_temp);
 	add_c(c1[1],c1_temp);
+	add_c(c1[2],c1_temp);
+	
 	
 	conv_FFT2D_2(dphidn1vx, omega1vx, c1_temp);
 	add_c(c1[0],c1_temp);
 	add_c(c1[1],c1_temp);
+	add_c(c1[2],c1_temp);
+	
 	
 	conv_FFT2D_2(dphidn1vz, omega1vz, c1_temp);
 	add_c(c1[0],c1_temp);
 	add_c(c1[1],c1_temp);
+	add_c(c1[2],c1_temp);
+	
 	
 	conv_FFT2D_2(dphidn2vx, omega2vx, c1_temp);
 	add_c(c1[0],c1_temp);
 	add_c(c1[1],c1_temp);
+	add_c(c1[2],c1_temp);
+	
 	
 	conv_FFT2D_2(dphidn2vz, omega2vz, c1_temp);
 	add_c(c1[0],c1_temp);
 	add_c(c1[1],c1_temp);
+	add_c(c1[2],c1_temp);
+	
 				
 }
 
@@ -506,13 +533,20 @@ void getVext(){
 	
 	
 	for(int i=0;i<Nx;i++)
+	for(int j=NiR-1;j<Nz;j++)
+			Vext[i*Nz+j] = eps*ew*(2./15*pow(dz*j,-9)-pow(dz*j,-3));
+	
+	/*
+	for(int i=0;i<Nx;i++)
 		for(int j=Nz-NiR;j<Nz;j++)
 			Vext[i*Nz+j] = 1000.;
-			
+	*/
+	
+		
 	for(int i=0;i<Nx;i++)
 	{
 		psi_bottom[i]=Vq;
-		psi_top[i]=-Vq;
+		psi_top[i]=0.;
 	}
 	
 	for(int i=0;i<Nx;i++)
@@ -520,31 +554,110 @@ void getVext(){
 			Vext_Q[i*Nz+j] = 0.;//(dz*(Nz/2-j))/Lz*.2*(8.85e-12);
 }
 
+
+void getc1_LJ2()
+{
+
+	getc1_LJ2_i(0,0,1.);
+	getc1_LJ2_i(0,1,eps_i/eps);
+	getc1_LJ2_i(0,2,eps_i/eps);
+	
+	getc1_LJ2_i(1,0,eps_i/eps);
+	getc1_LJ2_i(2,0,eps_i/eps);
+
+	
+}
+
+void getc1_LJ2_i(int j1 ,int k1 ,double factor)
+{
+	for(int i=0;i<Nx;i++)
+		for(int j=0;j<Nz-NiLJ+1;j++)
+			rhocopy[i*Nz+j]=rho[k1][i*Nz+j]*factor;
+			
+	for(int i=0;i<Nx;i++)
+		for(int j=Nz-NiLJ+1;j<Nz;j++)
+			rhocopy[i*Nz+j]=0.0;
+	
+	conv_FFT2D_2(rhocopy,UfilterFFT, c1_temp);
+	add_c(c1[j1],c1_temp);
+}
+
+
+void getUfilterFFT()
+{
+	FILE *F=fopen("../data/U2k.dat","r");
+	
+	double k,Fk,a,b,Fb;
+	
+	double Utempf[1000];
+	int i=0;
+	while(fscanf(F,"%lf %lf %lf %lf %lf",&a,&k,&b,&Fk,&Fb)==5)
+	{
+		Utempf[i++]=Fk;
+	}
+	fclose(F);
+	Utempf[0]=Fb;
+	
+	
+	double kx=0.0,kz=0.0;
+  double dkx=2.*PI/Lx,dkz=2.*PI/Lz;
+  for(int i=0;i<Nx;i++)
+  {
+  	if(i<=Nx/2)
+  		kx=dkx*i;
+  	else
+  		kx=-dkx*(Nx-i);
+  	for(int j=0;j<K;j++)
+  	{
+  		kz=dkz*j;
+			k=sqrt(kx*kx+kz*kz);
+			if(i==0 && j==0)
+			{
+				UfilterFFT[i*K+j][0]=-eps*14.726050906548;
+				UfilterFFT[i*K+j][1]=0.0;
+			}
+			else
+			{
+				int key=MIN((int)(k/PI*100),1000-1);
+				
+				UfilterFFT[i*K+j][0]=eps*Utempf[key]/2;
+				//printf("%lf %lf\n",k,UfilterFFT[i*K+j][0]);
+				UfilterFFT[i*K+j][1]=0.0;
+  		}
+  	}
+  }
+	
+}
+
+
 void rhocpy()
 {
 	for(int i=0;i<N;i++)
-		rhocopy[i]=rho[i];
-	
-	//printf("%f \n",rho[(Nx/2)*Nz+(Nz/2)]);
-	
-	/*
-	for(int i=0;i<Nx;i++)
-		for(int j=0;j<NiR-1;j++)
-			 rhocopy[i*Nz+j]= 0.0 ;
-	*/
-	
+		rhocopy[i]=(rho[0][i]+rho[1][i]+rho[2][i]);
 	
 	for(int i=0;i<Nx;i++)
 		for(int j=Nz-NiR+1;j<Nz;j++)
 			 rhocopy[i*Nz+j]= 0.0 ;
 }
 
+void filterrho()
+{
+	for(int i=0;i<Nx;i++)
+		for(int j=Nz-3*NiLJ;j<Nz;j++)
+			{
+				rho[0][i*Nz+j]=rhob_solvent;
+				rho[1][i*Nz+j]=rhob_solute;
+				rho[2][i*Nz+j]=rhob_solute;
+			}
+}
+
+
 void getpsi()
 {
 	for(int i=0;i<Nx;i++)
 	{
 		for(int j=0;j<Nz;j++)
-		phi[j*Nx+i]=-(rho1[i*Nz+j]-rho2[i*Nz+j]);
+		phi[j*Nx+i]=-(rho[1][i*Nz+j]-rho[2][i*Nz+j]);
 	}
 	
 	poisson_2D_complex(dx, Nx, Nz,psi_bottom,psi_top,phi,psi);
@@ -554,72 +667,140 @@ void iterate(){
 	rhocpy();
 	getn();
 	getc1_fmt();
+	getc1_LJ2();
+	
 	
 	getpsi();
 	
-	double muex=get_mu(rhob1)-log(rhob1);
-	int iend=Nz-NiR;
+	double muex[3]={mu_solvent-log(rhob_solvent),mu_solute-log(rhob_solute),mu_solute-log(rhob_solute)};
 	
-	//printf("mu:%f muex:%f c1:%f\n",get_mu(rhob1),muex,c1[1][(Nx/2)*Nz+Nz/2]);
+	int iend=Nz-3*NiLJ;
 	
-	//printf("%f\n",muex);
-	for(int i=0;i<Nx;i++)
-		for(int j=NiR;j<iend;j++)
-			rhonew[i*Nz+j]=rhob1*exp(-Vext[i*Nz+j]+c1[0][i*Nz+j]-lambdaB*psi[j*Nx+i]+muex-Vext_Q[i*Nz+j]);
 	
 	for(int i=0;i<Nx;i++)
 		for(int j=NiR;j<iend;j++)
-			rho1[i*Nz+j]=alpha*rhonew[i*Nz+j] + (1-alpha)*rho1[i*Nz+j];
-	
-	
-	muex=get_mu(rhob2)-log(rhob2);
-	
+			{
+				rhonew[0][i*Nz+j]=rhob_solvent*exp(-Vext[i*Nz+j]+c1[0][i*Nz+j]+muex[0]);
+				rhonew[1][i*Nz+j]=rhob_solute*exp(-Vext[i*Nz+j]+c1[1][i*Nz+j]-lambdaB*psi[j*Nx+i]+muex[1]-Vext_Q[i*Nz+j]);
+				rhonew[2][i*Nz+j]=rhob_solute*exp(-Vext[i*Nz+j]+c1[2][i*Nz+j]+lambdaB*psi[j*Nx+i]+muex[2]+Vext_Q[i*Nz+j]);
+			}
+			
+			
 	for(int i=0;i<Nx;i++)
 		for(int j=NiR;j<iend;j++)
-			rhonew[i*Nz+j]=rhob2*exp(-Vext[i*Nz+j]+c1[1][i*Nz+j]+lambdaB*psi[j*Nx+i]+muex+Vext_Q[i*Nz+j]);
-	
-	for(int i=0;i<Nx;i++)
-		for(int j=NiR;j<iend;j++)
-			rho2[i*Nz+j]=alpha*rhonew[i*Nz+j] + (1-alpha)*rho2[i*Nz+j];
-	
-	for(int i=0;i<N;i++)
-		rho[i]=rho1[i]+rho2[i];
+			{
+				rho[0][i*Nz+j]=alpha*rhonew[0][i*Nz+j] + (1-alpha)*rho[0][i*Nz+j];
+				rho[1][i*Nz+j]=alpha*rhonew[1][i*Nz+j] + (1-alpha)*rho[1][i*Nz+j];
+				rho[2][i*Nz+j]=alpha*rhonew[2][i*Nz+j] + (1-alpha)*rho[2][i*Nz+j];
+			}
+
 }
 
 
 void write_rho(double elapsed,int count_iter)
 {
 	char fname[100];
-	sprintf(fname,"../data/newrho2Deps%few%fdx%frhob%flambdaB%f.dat",eps,ew,dx,rhob,lambdaB);
+	sprintf(fname,"../data/newrho2Deps%feps_i%few%fdx%frhob_solvent%frhob_solute%flambdaB%f.dat",eps,eps_i,ew,dx,rhob_solvent,rhob_solute,lambdaB);
 	FILE *F=fopen(fname,"w");
 	for(int i=0;i<Nx;i++)
 	{
 		for(int j=0;j<Nz;j++)
-			fprintf(F,"%d %d %f %f %f\n",i,j,rho1[i*Nz+j],rho2[i*Nz+j],psi[j*Nx+i]);
+			fprintf(F,"%d %d %f %f %f %f\n",i,j,rho[0][i*Nz+j],rho[1][i*Nz+j],rho[2][i*Nz+j],psi[j*Nx+i]);
 		fprintf(F,"\n");
 	}
-	fprintf(F,"------------------\n20 x %d cycles time: %f s\n",count_iter,elapsed);
+	fprintf(F,"------------------\ncycles: %d x %d ;time: %f s\n",Nbatch,count_iter,elapsed);
 	fclose(F);
 	
-	sprintf(fname,"../data/newrho1Deps%few%fdx%frhob%flambdaB%f.dat",eps,ew,dx,rhob,lambdaB);
+	sprintf(fname,"../data/newrho1Deps%feps_i%few%fdx%frhob_solvent%frhob_solute%flambdaB%f.dat",eps,eps_i,ew,dx,rhob_solvent,rhob_solute,lambdaB);
 	F=fopen(fname,"w");
 	
 	for(int j=0;j<Nz;j++)
-	fprintf(F,"%f %f %f %f %f\n",j*dz,rho1[(Nx/2)*Nz+j],rho2[(Nx/2)*Nz+j],c1[0][(Nx/2)*Nz+j],psi[(j)*Nz+(Nx/2)]);
-	fprintf(F,"------------------\n20 x %d cycles time: %f s\n",count_iter,elapsed);
+	fprintf(F,"%f %f %f %f %f %f\n",j*dz,rho[0][(Nx/2)*Nz+j],rho[1][(Nx/2)*Nz+j],rho[2][(Nx/2)*Nz+j],c1[0][(Nx/2)*Nz+j],psi[(j)*Nz+(Nx/2)]);
+	fprintf(F,"------------------\ncycles: %d x %d ;time: %f s\n",Nbatch,count_iter,elapsed);
 	fclose(F);
 }
+
+
+void read_params()
+{
+	FILE *fp=fopen("params.txt", "r");
+	char line[256];
+	while (fgets(line, sizeof(line), fp)) 
+	{
+    if (sscanf(line, "lambdaB=%lf", &lambdaB) == 1) continue;
+    if (sscanf(line, "Vq=%lf", &Vq) == 1) continue;
+    if (sscanf(line, "ew=%lf", &ew) == 1) continue;
+    if (sscanf(line, "eps=%lf", &eps) == 1) continue;
+    if (sscanf(line, "eps_i=%lf", &eps_i) == 1) continue;
+    if (sscanf(line, "rhob_solvent=%lf", &rhob_solvent) == 1) continue;
+    if (sscanf(line, "rhob_solute=%lf", &rhob_solute) == 1) continue; 
+    if (sscanf(line, "Nbatch=%d", &Nbatch) == 1) continue;
+  }
+	
+  printf("\n----------------\nparams:\nNbatch:%d\nlambdaB:%f\nVq:%f\new:%f\neps:%f\neps_i:%f\nrhob_solvent:%f\nrhob_solute:%f\n----------------\n",Nbatch,lambdaB,Vq,ew,eps,eps_i,rhob_solvent,rhob_solute); 
+  fclose(fp);
+}
+
+void initialize_dataframes(int Narr,double *arr)
+{
+	for(int i=0;i<Narr;i++)
+	arr[i]=0.0;
+}
+
+void initialize_all_dataframes()
+{
+	for(int i=0;i<3;i++)
+	{
+		initialize_dataframes(N,rho[i]);
+		initialize_dataframes(N,rhonew[i]);
+		initialize_dataframes(N,c1[i]);
+	}
+	
+	initialize_dataframes(N,rhocopy);
+	initialize_dataframes(N,Vext);
+	initialize_dataframes(N,Vext_Q);
+	initialize_dataframes(N,phi);
+	initialize_dataframes(N,psi);
+	initialize_dataframes(Nx,psi_bottom);
+	initialize_dataframes(Nx,psi_top);
+	
+	initialize_dataframes(N,n0);
+	initialize_dataframes(N,n1);
+	initialize_dataframes(N,n2);
+	initialize_dataframes(N,n3);
+	initialize_dataframes(N,n1vx);
+	initialize_dataframes(N,n1vz);
+	initialize_dataframes(N,n2vx);
+	initialize_dataframes(N,n2vz);
+	
+	
+	initialize_dataframes(N,dphidn0);
+	initialize_dataframes(N,dphidn1);
+	initialize_dataframes(N,dphidn2);
+	initialize_dataframes(N,dphidn3);
+	initialize_dataframes(N,dphidn1vx);
+	initialize_dataframes(N,dphidn1vz);
+	initialize_dataframes(N,dphidn2vx);
+	initialize_dataframes(N,dphidn2vz);
+	
+	initialize_dataframes(N,c1_temp);
+}
+
+
 
 int main(int argc,char *argv[])
 {
 	
-	ew=atof(argv[1]);
+	read_params();
+	initialize_all_dataframes();
 	
 	clock_t start = clock();clock_t end;
 	double elapsed;
 	
+	get_mu();
 	getVext();
 	rhoinit();
+	getUfilterFFT();
 	getomega3();
 	getomega2();
 	
@@ -631,7 +812,7 @@ int main(int argc,char *argv[])
 	
 	for(int i=1;i<=INT_MAX;++i)
 	{	
-		for(int j=1;j<=10;j++)
+		for(int j=1;j<=Nbatch;j++)
 			iterate();
 		end = clock();
 		elapsed = (double)(end - start) / CLOCKS_PER_SEC;

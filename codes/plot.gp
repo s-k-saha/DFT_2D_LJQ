@@ -22,5 +22,5 @@ set colorbox                # show color scale
 #set cbrange [-0.5:1.8]
 
 # Plot
-splot '../data/newrho2Deps1.000000ew1.000000dx0.025000rhob_solvent0.603936rhob_solute0.019845lambdaB2.000000.dat' using ($1):($2):3 with pm3d notitle
+splot '../data/newrho2DNeps1.000000eps_i1.403153ew1.000000dx0.025000rhob_solvent_l0.603936rhob_solute_l0.019845lambdaB5.000000.dat' using ($1):($2):6 with pm3d notitle
 pause -1
