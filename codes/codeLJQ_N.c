@@ -89,10 +89,27 @@ fftw_complex omega2vz[Nx*K];
 
 fftw_complex  UfilterFFT[Nx*K];
 
+// FFTW global buffers and plans
+double *fft_in;
+double *fft_in2; // only needed for conv_FFT2D
+double *fft_out_real;
+
+fftw_complex *fft_f;
+fftw_complex *fft_g;
+fftw_complex *fft_h;
+
+fftw_plan plan_r2c_f;
+fftw_plan plan_r2c_g;
+fftw_plan plan_c2r;
+
+
+
 double dist(int,int,int,int);
 
 void getn(), getc1_fmt(),getc1_LJ(),filterc1(), getVext(), rhoinit(), iterate();
 void getomega3(),getomega2(),getomega1(),getomega0(),getomega1v(),getomega2v(),rhocpy(),filterrho(),write_rho(double,int),conv_FFT2D_2(double*,fftw_complex *,double*),getc1_LJ2(),getc1_LJ2_i(int,int,double),getUFilterFFT(),read_params(),initialize_dataframes(int,double*),initialize_all_dataframes();
+
+void init_fftw(),cleanup_fftw();
 
 double aux_J5(double, double);
 double aux_J11(double, double);
@@ -332,8 +349,8 @@ void rhoinit()
 		for(int j=0;j<NiR;j++)
 			rho[0][i*Nz+j]=rho[1][i*Nz+j]=rho[2][i*Nz+j]=0.0;
 	
-	int xbuf=Nx*.3;
-	int zbuf=Nz*.3;
+	int xbuf=Nx*.25;
+	int zbuf=Nz*.4;
 	for(int i=xbuf;i<Nx-xbuf;i++)
 		for(int j=NiR;j<NiR+zbuf;j++)
 			{
@@ -414,75 +431,44 @@ void read_params()
 
 void conv_FFT2D(double *f, double *g, double *h2)
 {
-	fftw_complex *fft_f=fftw_alloc_complex((size_t)Nx * K);
-	fftw_complex *fft_g=fftw_alloc_complex((size_t)Nx * K);
-	fftw_complex *fft_h=fftw_alloc_complex((size_t)Nx * K);
-	
-	
-	fftw_plan ff = fftw_plan_dft_r2c_2d(Nx,Nz, f, fft_f, FFTW_ESTIMATE);
-  fftw_execute(ff);
-	
-	fftw_plan fg = fftw_plan_dft_r2c_2d(Nx,Nz, g, fft_g, FFTW_ESTIMATE);
-  fftw_execute(fg);
-  
-  
-  for (size_t i = 0; i < (size_t)Nx * K; ++i) {
+    memcpy(fft_in,  f, sizeof(double) * N);
+    memcpy(fft_in2, g, sizeof(double) * N);
+
+    fftw_execute(plan_r2c_f);
+    fftw_execute(plan_r2c_g);
+
+    for (int i = 0; i < Nx * K; ++i) {
         double a = fft_f[i][0], b = fft_f[i][1];
-        double c = fft_g[i][0], d = fft_g[i][1]; // d==0
+        double c = fft_g[i][0], d = fft_g[i][1];
+
         fft_h[i][0] = a*c - b*d;
         fft_h[i][1] = a*d + b*c;
     }
-  
-  
-	fftw_plan fh= fftw_plan_dft_c2r_2d(Nx,Nz,fft_h,h2,FFTW_ESTIMATE);
-	fftw_execute(fh);
-	
-	
-	fftw_destroy_plan(ff);
-	fftw_destroy_plan(fg);
-	fftw_destroy_plan(fh);
-	
-	
-	for(int i=0;i<Nx*Nz;i++)
-	h2[i]=(h2[i]/N)*dx*dz;
-	
-	fftw_free(fft_f);
-  fftw_free(fft_g);
-  fftw_free(fft_h);
+
+    fftw_execute(plan_c2r);
+
+    for (int i = 0; i < N; i++)
+        h2[i] = (fft_out_real[i] / N) * dx * dz;
 }
 
-void conv_FFT2D_2(double *f, fftw_complex *fft_g,double *h2)
+void conv_FFT2D_2(double *f, fftw_complex *fft_g_input, double *h2)
 {
-	fftw_complex *fft_f=fftw_alloc_complex((size_t)Nx * K);
-	fftw_complex *fft_h=fftw_alloc_complex((size_t)Nx * K);
-	
-	
-	fftw_plan ff = fftw_plan_dft_r2c_2d(Nx,Nz, f, fft_f, FFTW_ESTIMATE);
-  fftw_execute(ff);
-	
-  
-  
-  for (int i = 0; i < Nx * K; ++i) {
+    memcpy(fft_in, f, sizeof(double) * N);
+
+    fftw_execute(plan_r2c_f);
+
+    for (int i = 0; i < Nx * K; ++i) {
         double a = fft_f[i][0], b = fft_f[i][1];
-        double c = fft_g[i][0], d = fft_g[i][1]; // d==0
+        double c = fft_g_input[i][0], d = fft_g_input[i][1];
+
         fft_h[i][0] = a*c - b*d;
         fft_h[i][1] = a*d + b*c;
     }
-  
-  
-	fftw_plan fh= fftw_plan_dft_c2r_2d(Nx,Nz,fft_h,h2,FFTW_ESTIMATE);
-	fftw_execute(fh);
-	
-	
-	fftw_destroy_plan(ff);
-	fftw_destroy_plan(fh);
-	
-	
-	for(int i=0;i<Nx*Nz;i++)
-	h2[i]=(h2[i]/N);
-	
-	fftw_free(fft_f);
-  fftw_free(fft_h);
+
+    fftw_execute(plan_c2r);
+
+    for (int i = 0; i < N; i++)
+        h2[i] = (fft_out_real[i] / N);
 }
 
 
@@ -772,8 +758,8 @@ void iterate(){
 
 void write_rho(double elapsed,int count_iter)
 {
-	char fname[100];
-	sprintf(fname,"../data/newrho2DNeps%feps_i%few%fdx%frhob_solvent_l%frhob_solute_l%flambdaB%f.dat",eps,eps_i,ew,dx,rhob_solvent_l,rhob_solute_l,lambdaB);
+	char fname[500];
+	sprintf(fname,"../data/newrho2DNeps%feps_i%few%fdx%frhob_solvent_l%frhob_solute_l%flambdaB%fVq%f.dat",eps,eps_i,ew,dx,rhob_solvent_l,rhob_solute_l,lambdaB,Vq);
 	FILE *F=fopen(fname,"w");
 	for(int i=0;i<Nx;i++)
 	{
@@ -784,11 +770,11 @@ void write_rho(double elapsed,int count_iter)
 	fprintf(F,"------------------\ncycles: %d x %d ;time: %f s\n",Nbatch,count_iter,elapsed);
 	fclose(F);
 	
-	sprintf(fname,"../data/newrho1DNeps%feps_i%few%fdx%frhob_solvent_l%frhob_solute_l%flambdaB%f.dat",eps,eps_i,ew,dx,rhob_solvent_l,rhob_solute_l,lambdaB);
+	sprintf(fname,"../data/newrho1DNeps%feps_i%few%fdx%frhob_solvent_l%frhob_solute_l%flambdaB%fVq%f.dat",eps,eps_i,ew,dx,rhob_solvent_l,rhob_solute_l,lambdaB,Vq);
 	F=fopen(fname,"w");
 	
 	for(int j=0;j<Nz;j++)
-	fprintf(F,"%f %f %f %f %f %f\n",j*dz,rho[0][(Nx/2)*Nz+j],rho[1][(Nx/2)*Nz+j],rho[2][(Nx/2)*Nz+j],c1[0][(Nx/2)*Nz+j],psi[(j)*Nz+(Nx/2)]);
+	fprintf(F,"%f %f %f %f %f %f\n",j*dz,rho[0][(Nx/2)*Nz+j],rho[1][(Nx/2)*Nz+j],rho[2][(Nx/2)*Nz+j],c1[0][(Nx/2)*Nz+j],psi[j*Nx+(Nx/2)]);
 	fprintf(F,"------------------\ncycles: %d x %d ;time: %f s\n",Nbatch,count_iter,elapsed);
 	fclose(F);
 }
@@ -838,11 +824,44 @@ void initialize_all_dataframes()
 	initialize_dataframes(N,c1_temp);
 }
 
+void init_fftw()
+{
+    fft_in  = (double*) fftw_malloc(sizeof(double) * N);
+    fft_in2 = (double*) fftw_malloc(sizeof(double) * N);
+    fft_out_real = (double*) fftw_malloc(sizeof(double) * N);
+
+    fft_f = fftw_alloc_complex((size_t)Nx * K);
+    fft_g = fftw_alloc_complex((size_t)Nx * K);
+    fft_h = fftw_alloc_complex((size_t)Nx * K);
+
+    plan_r2c_f = fftw_plan_dft_r2c_2d(Nx, Nz, fft_in, fft_f, FFTW_MEASURE);
+    plan_r2c_g = fftw_plan_dft_r2c_2d(Nx, Nz, fft_in2, fft_g, FFTW_MEASURE);
+    plan_c2r   = fftw_plan_dft_c2r_2d(Nx, Nz, fft_h, fft_out_real, FFTW_MEASURE);
+}
+
+void cleanup_fftw()
+{
+    fftw_destroy_plan(plan_r2c_f);
+    fftw_destroy_plan(plan_r2c_g);
+    fftw_destroy_plan(plan_c2r);
+
+    fftw_free(fft_in);
+    fftw_free(fft_in2);
+    fftw_free(fft_out_real);
+
+    fftw_free(fft_f);
+    fftw_free(fft_g);
+    fftw_free(fft_h);
+
+    fftw_cleanup();
+}
+
 int main(int argc,char *argv[])
 {
 	
 	read_params();
 	initialize_all_dataframes();
+	init_fftw();
 	
 	clock_t start = clock();clock_t end;
 	double elapsed;
@@ -865,10 +884,10 @@ int main(int argc,char *argv[])
 		for(int j=1;j<=Nbatch;j++)
 			iterate();
 		end = clock();
-		elapsed = (double)(end - start) / CLOCKS_PER_SEC;
+		elapsed = ((double)(end - start)) / CLOCKS_PER_SEC;
 		write_rho(elapsed,i);
 	}
-	
+	cleanup_fftw();
 
 	return 0;
 }
