@@ -64,7 +64,7 @@ int Nbatch=0;
 double ew;
 double Nrho[3];
 
-double rho[3][Nx*Nz],rhonew[3][Nx*Nz],rhocopy[Nx*Nz],Vext[Nx*Nz],Vext_Q[Nx*Nz];
+double rho[3][Nx*Nz],rhonew[3][Nx*Nz],rhocopy[Nx*Nz],Vext[3][Nx*Nz],Vext_Q[Nx*Nz];
 double phi[Nx*Nz];
 double psi[Nx*Nz];
 double psi_bottom[Nx];
@@ -569,17 +569,20 @@ void getc1_fmt()
 void getVext(){
 
 	for(int i=0;i<N;i++)
-		Vext[i]=0.0;
+		Vext[0][i]=Vext[1][i]=Vext[2][i]=0.0;
 	
 	for(int i=0;i<Nx;i++)
 		for(int j=0;j<NiR-1;j++)
-			Vext[i*Nz+j] = 1000.;
+			Vext[0][i*Nz+j] = Vext[1][i*Nz+j] = Vext[2][i*Nz+j] = 1000.;
 	
 	
 	for(int i=0;i<Nx;i++)
 	for(int j=NiR-1;j<Nz;j++)
-			Vext[i*Nz+j] = eps*ew*(2./15*pow(dz*j,-9)-pow(dz*j,-3));
-	
+			{
+			  Vext[0][i*Nz+j] = eps*ew*(2./15*pow(dz*j,-9)-pow(dz*j,-3));
+			  Vext[1][i*Nz+j] = eps_i*ew*(2./15*pow(dz*j,-9)-pow(dz*j,-3));
+			  Vext[2][i*Nz+j] = eps_i*ew*(2./15*pow(dz*j,-9)-pow(dz*j,-3));
+	    }
 			
 	for(int i=0;i<Nx;i++)
 	{
@@ -718,9 +721,9 @@ void iterate(){
 	for(int i=0;i<Nx;i++)
 		for(int j=NiR;j<iend;j++)
 			{
-				rhonew[0][i*Nz+j]=exp(-Vext[i*Nz+j]+c1[0][i*Nz+j]+mu[0]);
-				rhonew[1][i*Nz+j]=exp(-Vext[i*Nz+j]+c1[1][i*Nz+j]-lambdaB*psi[j*Nx+i]+mu[1]-Vext_Q[i*Nz+j]);
-				rhonew[2][i*Nz+j]=exp(-Vext[i*Nz+j]+c1[2][i*Nz+j]+lambdaB*psi[j*Nx+i]+mu[2]+Vext_Q[i*Nz+j]);
+				rhonew[0][i*Nz+j]=exp(-Vext[0][i*Nz+j]+c1[0][i*Nz+j]+mu[0]);
+				rhonew[1][i*Nz+j]=exp(-Vext[1][i*Nz+j]+c1[1][i*Nz+j]-lambdaB*psi[j*Nx+i]+mu[1]-Vext_Q[i*Nz+j]);
+				rhonew[2][i*Nz+j]=exp(-Vext[2][i*Nz+j]+c1[2][i*Nz+j]+lambdaB*psi[j*Nx+i]+mu[2]+Vext_Q[i*Nz+j]);
 			}
 			
 			
@@ -792,10 +795,11 @@ void initialize_all_dataframes()
 		initialize_dataframes(N,rho[i]);
 		initialize_dataframes(N,rhonew[i]);
 		initialize_dataframes(N,c1[i]);
+		initialize_dataframes(N,Vext[i]);
 	}
 	
 	initialize_dataframes(N,rhocopy);
-	initialize_dataframes(N,Vext);
+	
 	initialize_dataframes(N,Vext_Q);
 	initialize_dataframes(N,phi);
 	initialize_dataframes(N,psi);
